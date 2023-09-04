@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <title>CAD</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+    }
+
+    #jscad {
+      margin: 0;
+      width: 66vw;
+      height: 100vh;
+      border: 2px solid black;
+      z-index: 1;
+    }
+
+    .float-child {
+      float: left;
+    }
+
+    .w33 {
+      width: 30%;
+      padding: 10px 0 0 10px;
+    }
+
+    .w66 {
+      width: 66%;
+    }
+  </style>
+</head>
+
+<body>
+  <script language="javascript" src="https://unpkg.com/@jscad/modeling" id="MODELING"></script>
+  <script language="javascript" src="https://unpkg.com/@jscad/regl-renderer"></script>
+
+
+
+  <div class="float-container">
+    <div class="float-child w33">
+      <div id="parameter">
+        <label for="x1">Value for x1</label>
+        <input type="number" name="x1" value="0" id="x1">
+        <br>
+        <label for="y1">Value for y1</label>
+        <input type="number" name="y1" value="0" id="y1">
+        <br>
+        <label for="x2">Value for x2</label>
+        <input type="number" name="x2" value="100" id="x2">
+        <br>
+        <label for="y2">Value for y2</label>
+        <input type="number" name="y2" value="100" id="y2">
+        <br>
+        <label for="grid">Show Grid</label>
+        <input name="grid" type="checkbox" checked>
+        <br>
+        <button onclick="draw()">Draw</button>
+      </div>
+    </div>
+
+    <div class="float-child w66">
+      <div id="jscad"></div>
+    </div>
+
+
+
+  </div>
+
+
+
+  <script language="javascript">
+    function draw() {
+      document.querySelector('#jscad').innerHTML = ''
+      // ********************
+      // The design to render.
+      // ********************
+      let x1 = parseInt(document.getElementById('x1').value);
+      let x2 = parseInt(document.getElementById('x2').value);
+      let y1 = parseInt(document.getElementById('y1').value);
+      let y2 = parseInt(document.getElementById('y2').value);
+      let showGrid = false;
+      if(document.querySelector("input[type=checkbox]").checked){
+        showGrid = true
+      }
+
+      const { booleans, colors, primitives } = jscadModeling // modeling comes from the included MODELING library
+
+      const { intersect, subtract } = booleans
+      const { colorize } = colors
+      const { line } = primitives
+      let demo = () => {
+
+        let line2D = colorize([0, 0, 0], line([[x1, y1], [x2, y2]]))
+
+        return [line2D]
+      }
+      // ********************
+      // Renderer configuration and initiation.
+      // ********************
+      const { prepareRender, drawCommands, cameras, controls, entitiesFromSolids } = jscadReglRenderer
+
+      const perspectiveCamera = cameras.perspective
+      const orbitControls = controls.orbit
+
+      const containerElement = document.getElementById("jscad")
+
+      const width = containerElement.clientWidth
+      const height = containerElement.clientHeight
+
+      const state = {}
+
+      // prepare the camera
+      state.camera = Object.assign({}, perspectiveCamera.defaults)
+      perspectiveCamera.setProjection(state.camera, state.camera, { width, height })
+      perspectiveCamera.update(state.camera, state.camera)
+
+      // prepare the controls
+      state.controls = orbitControls.defaults
+
+      // prepare the renderer
+      const setupOptions = {
+        glOptions: { container: containerElement },
+      }
+      const renderer = prepareRender(setupOptions)
+
+      const gridOptions = {
+        visuals: {
+          drawCmd: 'drawGrid',
+          show: showGrid
+        },
+        size: [5000, 5000],
+        ticks: [5, 5]
+      }
+
+      const axisOptions = {
+        visuals: {
+          drawCmd: 'drawAxis',
+          show: true
+        },
+        size: 5000,
+      }
+
+      const entities = entitiesFromSolids({}, demo({ scale: 1 }))
+
+      // assemble the options for rendering
+      const renderOptions = {
+        camera: state.camera,
+        drawCommands: {
+          drawAxis: drawCommands.drawAxis,
+          drawGrid: drawCommands.drawGrid,
+          drawLines: drawCommands.drawLines,
+          drawMesh: drawCommands.drawMesh
+        },
+        // define the visual content
+        entities: [
+          gridOptions,
+          axisOptions,
+          ...entities
+        ]
+      }
+
+      // the heart of rendering, as themes, controls, etc change
+      let updateView = true
+
+      const doRotatePanZoom = () => {
+
+        if (rotateDelta[0] || rotateDelta[1]) {
+          const updated = orbitControls.rotate({ controls: state.controls, camera: state.camera, speed: rotateSpeed }, rotateDelta)
+          state.controls = { ...state.controls, ...updated.controls }
+          updateView = true
+          rotateDelta = [0, 0]
+        }
+
+        if (panDelta[0] || panDelta[1]) {
+          const updated = orbitControls.pan({ controls: state.controls, camera: state.camera, speed: panSpeed }, panDelta)
+          state.controls = { ...state.controls, ...updated.controls }
+          panDelta = [0, 0]
+          state.camera.position = updated.camera.position
+          state.camera.target = updated.camera.target
+          updateView = true
+        }
+
+        if (zoomDelta) {
+          const updated = orbitControls.zoom({ controls: state.controls, camera: state.camera, speed: zoomSpeed }, zoomDelta)
+          state.controls = { ...state.controls, ...updated.controls }
+          zoomDelta = 0
+          updateView = true
+        }
+      }
+
+      const updateAndRender = (timestamp) => {
+        doRotatePanZoom()
+
+        if (updateView) {
+          const updates = orbitControls.update({ controls: state.controls, camera: state.camera })
+          state.controls = { ...state.controls, ...updates.controls }
+          updateView = state.controls.changed // for elasticity in rotate / zoom
+
+          state.camera.position = updates.camera.position
+          perspectiveCamera.update(state.camera)
+
+          renderer(renderOptions)
+        }
+        window.requestAnimationFrame(updateAndRender)
+      }
+      window.requestAnimationFrame(updateAndRender)
+
+      // convert HTML events (mouse movement) to viewer changes
+      let lastX = 0
+      let lastY = 0
+
+      const rotateSpeed = 0.002
+      const panSpeed = 1
+      const zoomSpeed = 0.08
+      let rotateDelta = [0, 0]
+      let panDelta = [0, 0]
+      let zoomDelta = 0
+      let pointerDown = false
+
+      const moveHandler = (ev) => {
+        if (!pointerDown) return
+        const dx = lastX - ev.pageX
+        const dy = ev.pageY - lastY
+
+        const shiftKey = (ev.shiftKey === true) || (ev.touches && ev.touches.length > 2)
+        if (shiftKey) {
+          panDelta[0] += dx
+          panDelta[1] += dy
+        } else {
+          rotateDelta[0] -= dx
+          rotateDelta[1] -= dy
+        }
+
+        lastX = ev.pageX
+        lastY = ev.pageY
+
+        ev.preventDefault()
+      }
+      const downHandler = (ev) => {
+        pointerDown = true
+        lastX = ev.pageX
+        lastY = ev.pageY
+        containerElement.setPointerCapture(ev.pointerId)
+      }
+
+      const upHandler = (ev) => {
+        pointerDown = false
+        containerElement.releasePointerCapture(ev.pointerId)
+      }
+
+      const wheelHandler = (ev) => {
+        zoomDelta += ev.deltaY
+        ev.preventDefault()
+      }
+
+      containerElement.onpointermove = moveHandler
+      containerElement.onpointerdown = downHandler
+      containerElement.onpointerup = upHandler
+      containerElement.onwheel = wheelHandler
+    }
+  </script>
+  <script>
+  </script>
+</body>
+
+</html>
